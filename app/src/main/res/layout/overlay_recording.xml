@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/recordingOverlay"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#E6000000"
+    android:visibility="gone"
+    android:clickable="true">
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@drawable/bg_dialog"
+        android:padding="30dp">
+
+        <TextView
+            android:id="@+id/recordingHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="按住录音，最长15秒"
+            android:textColor="#FFF"
+            android:textSize="16sp"/>
+
+        <TextView
+            android:id="@+id/recordingTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="00:00"
+            android:textColor="#FFF"
+            android:textSize="32sp"
+            android:fontFamily="monospace"
+            android:layout_marginTop="20dp"/>
+
+        <ProgressBar
+            android:id="@+id/recordingProgress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="200dp"
+            android:layout_height="4dp"
+            android:max="15"
+            android:progressTint="#FF4444"
+            android:progressBackgroundTint="#333333"
+            android:layout_marginTop="20dp"/>
+
+        <Button
+            android:id="@+id/stopRecordingBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="停止并发送"
+            android:textColor="#000"
+            android:background="#FFF"
+            android:layout_marginTop="20dp"/>
+    </LinearLayout>
+</FrameLayout>
