@@ -3,6 +3,7 @@ package com.motan.chat;
 import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
@@ -13,9 +14,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.*;
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -31,6 +34,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int REQ_CODE_PERMISSIONS = 100;
     private static final int REQ_CODE_IMAGE = 101;
+    private static final int REQ_RECORD_PERMISSION = 200;
 
     private RecyclerView recyclerView;
     private EditText input;
@@ -57,7 +61,6 @@ public class MainActivity extends AppCompatActivity {
     // 音频相关
     private AudioRecorder audioRecorder;
     private boolean isRecording = false;
-    private File audioFile;
 
     // 滚动控制
     private boolean isAtBottom = true;
@@ -132,8 +135,12 @@ public class MainActivity extends AppCompatActivity {
         sendBtn.setOnClickListener(v -> sendMessage());
         imageBtn.setOnClickListener(v -> pickImages());
         voiceBtn.setOnClickListener(v -> {
-            if (isRecording) return;
-            checkRecordPermission(() -> startRecording());
+            // 录音权限检查
+            if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_RECORD_PERMISSION);
+            } else {
+                startRecording();
+            }
         });
 
         stopRecordingBtn.setOnClickListener(v -> stopRecording());
@@ -145,11 +152,15 @@ public class MainActivity extends AppCompatActivity {
         newMessageBar.setOnClickListener(v -> scrollToBottom());
     }
 
-    private void checkRecordPermission(Runnable onGranted) {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, 200);
-        } else {
-            onGranted.run();
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_RECORD_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startRecording();
+            } else {
+                Toast.makeText(this, "需要录音权限才能使用语音功能", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 
@@ -293,10 +304,6 @@ public class MainActivity extends AppCompatActivity {
                 serverMessages.add(msg);
                 String sha = api.getFileSha();
                 boolean success = api.uploadMessageJson(gson.toJson(serverMessages), sha);
-                if (!success && sha == null) {
-                    // 文件不存在，直接创建
-                    success = api.uploadMessageJson(gson.toJson(serverMessages), null);
-                }
                 if (success) {
                     runOnUiThread(() -> {
                         loadMessages();
@@ -345,32 +352,26 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void changeName() {
-        String newName = newNameDialog();
-        if (newName != null && newName.length() <= 10) {
-            String oldName = currentUsername;
-            currentUsername = newName;
-            getSharedPreferences("chat_prefs", MODE_PRIVATE).edit().putString("username", newName).apply();
-            userNameView.setText(newName);
-            Toast.makeText(this, oldName + " 更名为 " + newName, Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private String newNameDialog() {
-        // 简化：使用输入框，真实可替换为Dialog
-        android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("修改用户名");
         final EditText input = new EditText(this);
         input.setText(currentUsername);
         input.setMaxLines(1);
         builder.setView(input);
-        final String[] result = {null};
-        builder.setPositiveButton("确定", (dialog, which) -> result[0] = input.getText().toString().trim());
+        builder.setPositiveButton("确定", (dialog, which) -> {
+            String newName = input.getText().toString().trim();
+            if (!TextUtils.isEmpty(newName) && newName.length() <= 10) {
+                String oldName = currentUsername;
+                currentUsername = newName;
+                getSharedPreferences("chat_prefs", MODE_PRIVATE).edit().putString("username", newName).apply();
+                userNameView.setText(newName);
+                Toast.makeText(MainActivity.this, oldName + " 更名为 " + newName, Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(MainActivity.this, "用户名需1-10个字符", Toast.LENGTH_SHORT).show();
+            }
+        });
         builder.setNegativeButton("取消", null);
         builder.show();
-        // 这里同步返回有困难，重写为异步
-        // 修改：通过回调处理，此处仅示意，实际项目请用DialogFragment
-        // 暂时返回null，实际使用时需实现完整对话框
-        return null;
     }
 
     private String getOrCreateUserId() {
