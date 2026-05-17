@@ -4,6 +4,7 @@ import android.util.Base64;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import okhttp3.*;
+import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.IOException;
 import java.lang.reflect.Type;
@@ -31,12 +32,14 @@ public class GiteeApi {
         gson = new Gson();
     }
 
+    // 获取消息列表
     public List<Message> getMessages() throws IOException {
         String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + FILE_PATH + "?access_token=" + ACCESS_TOKEN;
         Request request = new Request.Builder().url(url).build();
         try (Response response = client.newCall(request).execute()) {
-            if (response.code() == 404) return null;
+            if (response.code() == 404) return null;  // 文件不存在，返回 null
             if (!response.isSuccessful()) throw new IOException("HTTP " + response.code());
+
             String json = response.body().string();
             JSONObject root = new JSONObject(json);
             String content = root.getString("content");
@@ -44,73 +47,105 @@ public class GiteeApi {
             String messagesJson = new String(decoded, "UTF-8");
             Type listType = new TypeToken<List<Message>>(){}.getType();
             return gson.fromJson(messagesJson, listType);
-        } catch (Exception e) {
-            throw new IOException(e);
+        } catch (JSONException e) {
+            throw new IOException("JSON 解析失败", e);
         }
     }
 
+    // 获取文件的 SHA（用于更新）
     public String getFileSha() throws IOException {
         String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + FILE_PATH + "?access_token=" + ACCESS_TOKEN;
         Request request = new Request.Builder().url(url).build();
         try (Response response = client.newCall(request).execute()) {
-            if (response.code() == 404) return null;
+            if (response.code() == 404) return null;  // 文件不存在
             if (!response.isSuccessful()) throw new IOException("HTTP " + response.code());
+
             String json = response.body().string();
             JSONObject root = new JSONObject(json);
             return root.getString("sha");
-        } catch (Exception e) {
-            throw new IOException(e);
+        } catch (JSONException e) {
+            throw new IOException("SHA 解析失败", e);
         }
     }
 
+    // 上传或更新消息 JSON 文件
     public boolean uploadMessageJson(String jsonContent, String sha) throws IOException {
         String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + FILE_PATH + "?access_token=" + ACCESS_TOKEN;
         String encoded = Base64.encodeToString(jsonContent.getBytes("UTF-8"), Base64.DEFAULT);
-        JSONObject body = new JSONObject();
-        body.put("content", encoded);
-        body.put("message", "更新消息 - " + System.currentTimeMillis());
-        if (sha != null) body.put("sha", sha);
-        RequestBody requestBody = RequestBody.create(body.toString(), MediaType.parse("application/json"));
-        Request request = new Request.Builder().url(url).put(requestBody).build();
-        try (Response response = client.newCall(request).execute()) {
-            return response.isSuccessful();
-        } catch (Exception e) {
-            throw new IOException(e);
+
+        try {
+            JSONObject body = new JSONObject();
+            body.put("content", encoded);
+            body.put("message", "更新消息 - " + System.currentTimeMillis());
+
+            Request.Builder requestBuilder = new Request.Builder().url(url);
+            if (sha == null) {
+                // 文件不存在，使用 POST 创建
+                requestBuilder.post(
+                        RequestBody.create(body.toString(), MediaType.parse("application/json"))
+                );
+            } else {
+                // 文件存在，使用 PUT 更新
+                body.put("sha", sha);
+                requestBuilder.put(
+                        RequestBody.create(body.toString(), MediaType.parse("application/json"))
+                );
+            }
+
+            try (Response response = client.newCall(requestBuilder.build()).execute()) {
+                return response.isSuccessful();
+            }
+        } catch (JSONException e) {
+            throw new IOException("构建请求体失败", e);
         }
     }
 
+    // 上传图片
     public String uploadImage(byte[] imageData, String filename) throws IOException {
         String filePath = IMAGE_DIR + "/" + filename;
         String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + filePath + "?access_token=" + ACCESS_TOKEN;
         String encoded = Base64.encodeToString(imageData, Base64.DEFAULT);
-        JSONObject body = new JSONObject();
-        body.put("content", encoded);
-        body.put("message", "上传图片 " + filename);
-        body.put("branch", "master");
-        RequestBody requestBody = RequestBody.create(body.toString(), MediaType.parse("application/json"));
-        Request request = new Request.Builder().url(url).post(requestBody).build();
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) throw new IOException("Upload image failed: " + response.code());
-        } catch (Exception e) {
-            throw new IOException(e);
+
+        try {
+            JSONObject body = new JSONObject();
+            body.put("content", encoded);
+            body.put("message", "上传图片 " + filename);
+            body.put("branch", "master");
+
+            RequestBody requestBody = RequestBody.create(body.toString(), MediaType.parse("application/json"));
+            Request request = new Request.Builder().url(url).post(requestBody).build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful())
+                    throw new IOException("Upload image failed: " + response.code());
+            }
+        } catch (JSONException e) {
+            throw new IOException("构建图片上传请求失败", e);
         }
         return RAW_BASE + filePath;
     }
 
+    // 上传语音
     public String uploadAudio(byte[] audioData, String filename) throws IOException {
         String filePath = AUDIO_DIR + "/" + filename;
         String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + filePath + "?access_token=" + ACCESS_TOKEN;
         String encoded = Base64.encodeToString(audioData, Base64.DEFAULT);
-        JSONObject body = new JSONObject();
-        body.put("content", encoded);
-        body.put("message", "上传语音 " + filename);
-        body.put("branch", "master");
-        RequestBody requestBody = RequestBody.create(body.toString(), MediaType.parse("application/json"));
-        Request request = new Request.Builder().url(url).post(requestBody).build();
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) throw new IOException("Upload audio failed: " + response.code());
-        } catch (Exception e) {
-            throw new IOException(e);
+
+        try {
+            JSONObject body = new JSONObject();
+            body.put("content", encoded);
+            body.put("message", "上传语音 " + filename);
+            body.put("branch", "master");
+
+            RequestBody requestBody = RequestBody.create(body.toString(), MediaType.parse("application/json"));
+            Request request = new Request.Builder().url(url).post(requestBody).build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful())
+                    throw new IOException("Upload audio failed: " + response.code());
+            }
+        } catch (JSONException e) {
+            throw new IOException("构建语音上传请求失败", e);
         }
         return RAW_BASE + filePath;
     }
