@@ -5,117 +5,152 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
-import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.os.Build;
-import android.os.Handler;
 import android.os.IBinder;
-import android.os.Looper;
+
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+
+import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class ChatService extends Service {
-    private static final String CHANNEL_ID = "chat_keep_alive";
-    private static final int NOTIFY_ID = 1;
-    private static final long POLL_INTERVAL = 3000;
-
-    public static final String ACTION_NEW_MESSAGE = "com.motan.chat.NEW_MESSAGE";
-    public static final String EXTRA_COUNT = "extra_count";
+    private static final String CHANNEL_KEEP_ALIVE = "chat_keep_alive";
+    private static final String CHANNEL_NEW_MSG = "chat_new_message";
+    private static final int NOTIFY_KEEP = 1;
 
     private GiteeApi api;
-    private Handler handler;
+    private ScheduledExecutorService scheduler;
     private int lastMessageCount = 0;
-    private boolean isPolling = false;
+    private boolean firstLoad = true;
 
     @Override
     public void onCreate() {
         super.onCreate();
         api = new GiteeApi();
-        handler = new Handler(Looper.getMainLooper());
-        createNotificationChannel();
-        startForeground(NOTIFY_ID, buildNotification("连接中..."));
+        createNotificationChannels();
+        startForeground(NOTIFY_KEEP, buildStatusNotification("在线", "等待新消息..."));
         startPolling();
     }
 
-    private void createNotificationChannel() {
+    private void createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID, "保活通知", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("保持聊天服务运行");
-            NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) manager.createNotificationChannel(channel);
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm == null) return;
+
+            NotificationChannel keep = new NotificationChannel(
+                    CHANNEL_KEEP_ALIVE, "服务保活", NotificationManager.IMPORTANCE_LOW);
+            keep.setDescription("保持后台连接");
+            nm.createNotificationChannel(keep);
+
+            NotificationChannel newMsg = new NotificationChannel(
+                    CHANNEL_NEW_MSG, "新消息", NotificationManager.IMPORTANCE_HIGH);
+            newMsg.setDescription("收到新消息提醒");
+            newMsg.enableVibration(true);
+            nm.createNotificationChannel(newMsg);
         }
     }
 
-    private Notification buildNotification(String text) {
+    private Notification buildStatusNotification(String title, String text) {
         Intent intent = new Intent(this, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(this, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("墨谭")
+        return new NotificationCompat.Builder(this, CHANNEL_KEEP_ALIVE)
+                .setContentTitle("墨谭 · " + title)
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentIntent(pi)
                 .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build();
     }
 
     private void startPolling() {
-        isPolling = true;
-        handler.post(pollingRunnable);
+        scheduler = Executors.newSingleThreadScheduledExecutor();
+        scheduler.scheduleWithFixedDelay(() -> {
+            try {
+                List<Message> messages = api.getMessages();
+                if (messages == null) return;
+
+                int currentCount = messages.size();
+
+                // 更新状态通知
+                updateStatusNotification(currentCount);
+
+                // 检测新消息（忽略首次加载）
+                if (!firstLoad && lastMessageCount > 0 && currentCount > lastMessageCount) {
+                    int newCount = currentCount - lastMessageCount;
+                    showNewMessageNotification(messages);
+                }
+                lastMessageCount = currentCount;
+                firstLoad = false;
+            } catch (IOException e) {
+                updateStatusNotification(-1);
+            }
+        }, 0, 3, TimeUnit.SECONDS);
     }
 
-    private final Runnable pollingRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (!isPolling) return;
-            new Thread(() -> {
-                try {
-                    List<Message> messages = api.getMessages();
-                    if (messages != null) {
-                        int newCount = messages.size() - lastMessageCount;
-                        if (newCount > 0 && lastMessageCount > 0) {
-                            // 发送本地广播
-                            Intent broadcast = new Intent(ACTION_NEW_MESSAGE);
-                            broadcast.putExtra(EXTRA_COUNT, newCount);
-                            LocalBroadcastManager.getInstance(ChatService.this).sendBroadcast(broadcast);
-                            // 发送通知
-                            sendNewMessageNotification(newCount);
-                        }
-                        lastMessageCount = messages.size();
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }).start();
-            handler.postDelayed(this, POLL_INTERVAL);
+    private void updateStatusNotification(int messageCount) {
+        String title, text;
+        if (messageCount < 0) {
+            title = "离线";
+            text = "连接失败，正在重试...";
+        } else {
+            title = "在线";
+            text = messageCount + " 条消息 · 刚刚更新";
         }
-    };
-
-    private void sendNewMessageNotification(int count) {
+        Notification notification = buildStatusNotification(title, text);
         NotificationManager nm = getSystemService(NotificationManager.class);
-        if (nm == null) return;
+        if (nm != null) nm.notify(NOTIFY_KEEP, notification);
+    }
+
+    private void showNewMessageNotification(List<Message> messages) {
+        // 取最后一条消息作为预览
+        String preview = "收到新消息";
+        if (messages != null && !messages.isEmpty()) {
+            Message last = messages.get(messages.size() - 1);
+            String from = last.username;
+            String content = last.text;
+            if (content == null && last.images != null && !last.images.isEmpty()) {
+                content = "[图片]";
+            } else if (content == null && last.audio != null) {
+                content = "[语音]";
+            } else if (content == null) {
+                content = "";
+            }
+            preview = from + ": " + content;
+        }
+
         Intent intent = new Intent(this, MainActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent pi = PendingIntent.getActivity(this, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification notif = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("新消息")
-                .setContentText("收到 " + count + " 条新消息")
+
+        Notification notification = new NotificationCompat.Builder(this, CHANNEL_NEW_MSG)
+                .setContentTitle("墨谭 · 新消息")
+                .setContentText(preview)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setAutoCancel(true)
                 .setContentIntent(pi)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(Notification.DEFAULT_VIBRATE | Notification.DEFAULT_SOUND)
                 .build();
-        nm.notify(100, notif);
+
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm != null) {
+            nm.notify(100 + (int)(System.currentTimeMillis() % 1000), notification);
+        }
     }
 
     @Override
     public void onDestroy() {
-        isPolling = false;
-        handler.removeCallbacks(pollingRunnable);
+        if (scheduler != null && !scheduler.isShutdown()) {
+            scheduler.shutdownNow();
+        }
         super.onDestroy();
     }
 
