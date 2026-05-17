@@ -20,6 +20,8 @@ public class GiteeApi {
     private static final String AUDIO_DIR = "rec";
     private static final String API_BASE = "https://gitee.com/api/v5";
     private static final String RAW_BASE = "https://gitee.com/" + OWNER + "/" + REPO + "/raw/master/";
+    // 消息文件 raw 地址
+    private static final String MESSAGES_RAW_URL = RAW_BASE + FILE_PATH;
 
     private final OkHttpClient client;
     private final Gson gson;
@@ -32,32 +34,25 @@ public class GiteeApi {
         gson = new Gson();
     }
 
-    // 获取消息列表
+    // ✅ 消息下载：直接请求 raw 文件，无 CORS 限制，无需 Base64 解码
     public List<Message> getMessages() throws IOException {
-        String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + FILE_PATH + "?access_token=" + ACCESS_TOKEN;
-        Request request = new Request.Builder().url(url).build();
+        Request request = new Request.Builder().url(MESSAGES_RAW_URL).build();
         try (Response response = client.newCall(request).execute()) {
-            if (response.code() == 404) return null;  // 文件不存在，返回 null
+            if (response.code() == 404) return null;
             if (!response.isSuccessful()) throw new IOException("HTTP " + response.code());
 
             String json = response.body().string();
-            JSONObject root = new JSONObject(json);
-            String content = root.getString("content");
-            byte[] decoded = Base64.decode(content, Base64.DEFAULT);
-            String messagesJson = new String(decoded, "UTF-8");
             Type listType = new TypeToken<List<Message>>(){}.getType();
-            return gson.fromJson(messagesJson, listType);
-        } catch (JSONException e) {
-            throw new IOException("JSON 解析失败", e);
+            return gson.fromJson(json, listType);
         }
     }
 
-    // 获取文件的 SHA（用于更新）
+    // 获取文件 SHA（仍需要 API，用于更新）
     public String getFileSha() throws IOException {
         String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + FILE_PATH + "?access_token=" + ACCESS_TOKEN;
         Request request = new Request.Builder().url(url).build();
         try (Response response = client.newCall(request).execute()) {
-            if (response.code() == 404) return null;  // 文件不存在
+            if (response.code() == 404) return null;
             if (!response.isSuccessful()) throw new IOException("HTTP " + response.code());
 
             String json = response.body().string();
@@ -68,7 +63,7 @@ public class GiteeApi {
         }
     }
 
-    // 上传或更新消息 JSON 文件
+    // 上传/更新消息 JSON（使用 API，POST 创建，PUT 更新）
     public boolean uploadMessageJson(String jsonContent, String sha) throws IOException {
         String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + FILE_PATH + "?access_token=" + ACCESS_TOKEN;
         String encoded = Base64.encodeToString(jsonContent.getBytes("UTF-8"), Base64.DEFAULT);
@@ -80,12 +75,10 @@ public class GiteeApi {
 
             Request.Builder requestBuilder = new Request.Builder().url(url);
             if (sha == null) {
-                // 文件不存在，使用 POST 创建
                 requestBuilder.post(
                         RequestBody.create(body.toString(), MediaType.parse("application/json"))
                 );
             } else {
-                // 文件存在，使用 PUT 更新
                 body.put("sha", sha);
                 requestBuilder.put(
                         RequestBody.create(body.toString(), MediaType.parse("application/json"))
@@ -100,7 +93,7 @@ public class GiteeApi {
         }
     }
 
-    // 上传图片
+    // 上传图片（API）
     public String uploadImage(byte[] imageData, String filename) throws IOException {
         String filePath = IMAGE_DIR + "/" + filename;
         String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + filePath + "?access_token=" + ACCESS_TOKEN;
@@ -125,7 +118,7 @@ public class GiteeApi {
         return RAW_BASE + filePath;
     }
 
-    // 上传语音
+    // 上传语音（API）
     public String uploadAudio(byte[] audioData, String filename) throws IOException {
         String filePath = AUDIO_DIR + "/" + filename;
         String url = API_BASE + "/repos/" + OWNER + "/" + REPO + "/contents/" + filePath + "?access_token=" + ACCESS_TOKEN;
