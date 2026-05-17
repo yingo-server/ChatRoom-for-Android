@@ -20,19 +20,21 @@ jobs:
         with:
           gradle-version: 7.5.1
 
-      - name: Install ImageMagick
-        run: sudo apt-get update && sudo apt-get install -y imagemagick
+      - name: Install Pillow
+        run: pip install Pillow
 
       - name: Generate adaptive icons from ic.png
         run: |
-          mkdir -p app/src/main/res/mipmap-mdpi app/src/main/res/mipmap-hdpi \
-                   app/src/main/res/mipmap-xhdpi app/src/main/res/mipmap-xxhdpi \
-                   app/src/main/res/mipmap-xxxhdpi
-          convert ic.png -resize 48x48   app/src/main/res/mipmap-mdpi/ic_launcher.png
-          convert ic.png -resize 72x72   app/src/main/res/mipmap-hdpi/ic_launcher.png
-          convert ic.png -resize 96x96   app/src/main/res/mipmap-xhdpi/ic_launcher.png
-          convert ic.png -resize 144x144 app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-          convert ic.png -resize 192x192 app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          python3 -c "
+          from PIL import Image
+          img = Image.open('ic.png')
+          sizes = {'mdpi':48, 'hdpi':72, 'xhdpi':96, 'xxhdpi':144, 'xxxhdpi':192}
+          import os
+          for density, size in sizes.items():
+              dir = f'app/src/main/res/mipmap-{density}'
+              os.makedirs(dir, exist_ok=True)
+              img.resize((size, size)).save(f'{dir}/ic_launcher.png')
+          "
 
       - name: Build with Gradle
         run: gradle assembleRelease
