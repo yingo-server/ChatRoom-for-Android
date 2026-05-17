@@ -1,31 +1,27 @@
 package com.motan.chat;
 
 import android.Manifest;
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 import android.text.TextUtils;
-import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.*;
+
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+
 import com.google.gson.Gson;
+
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,23 +44,15 @@ public class MainActivity extends AppCompatActivity {
 
     private GiteeApi api;
     private ChatAdapter adapter;
-    private List<Message> messages = new ArrayList<>();
+    private final List<Message> messages = new ArrayList<>();
     private String currentUserId;
     private String currentUsername;
-    private Gson gson = new Gson();
-    private Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Gson gson = new Gson();
 
-    // 图片相关
     private List<Uri> selectedImages = new ArrayList<>();
-    private static final int MAX_IMAGE_SIZE = 5 * 1024 * 1024;
-
-    // 音频相关
     private AudioRecorder audioRecorder;
     private boolean isRecording = false;
-
-    // 滚动控制
     private boolean isAtBottom = true;
-    private int newMessageCount = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -79,6 +67,7 @@ public class MainActivity extends AppCompatActivity {
         requestPermissions();
         setupRecyclerView();
         setupListeners();
+        // 启动前台服务（轮询+通知）
         startService(new Intent(this, ChatService.class));
         loadMessages();
     }
@@ -123,7 +112,6 @@ public class MainActivity extends AppCompatActivity {
                     int lastVisible = lm.findLastCompletelyVisibleItemPosition();
                     isAtBottom = lastVisible >= adapter.getItemCount() - 1;
                     if (isAtBottom) {
-                        newMessageCount = 0;
                         newMessageBar.setVisibility(View.GONE);
                     }
                 }
@@ -135,19 +123,14 @@ public class MainActivity extends AppCompatActivity {
         sendBtn.setOnClickListener(v -> sendMessage());
         imageBtn.setOnClickListener(v -> pickImages());
         voiceBtn.setOnClickListener(v -> {
-            // 录音权限检查
             if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_RECORD_PERMISSION);
             } else {
                 startRecording();
             }
         });
-
         stopRecordingBtn.setOnClickListener(v -> stopRecording());
-        recordingOverlay.setOnClickListener(v -> {
-            if (isRecording) stopRecording();
-        });
-
+        recordingOverlay.setOnClickListener(v -> { if (isRecording) stopRecording(); });
         userNameView.setOnClickListener(v -> changeName());
         newMessageBar.setOnClickListener(v -> scrollToBottom());
     }
@@ -252,8 +235,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         findViewById(R.id.previewScroll).setVisibility(View.VISIBLE);
-        for (int i = 0; i < selectedImages.size(); i++) {
-            Uri uri = selectedImages.get(i);
+        for (Uri uri : selectedImages) {
             ImageView imageView = new ImageView(this);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(150, 150);
             params.setMargins(8, 0, 8, 0);
@@ -298,17 +280,13 @@ public class MainActivity extends AppCompatActivity {
                 msg.timestamp = System.currentTimeMillis();
                 msg.time = Utils.formatTime(msg.timestamp);
 
-                // 加载最新消息列表并追加
                 List<Message> serverMessages = api.getMessages();
                 if (serverMessages == null) serverMessages = new ArrayList<>();
                 serverMessages.add(msg);
                 String sha = api.getFileSha();
                 boolean success = api.uploadMessageJson(gson.toJson(serverMessages), sha);
                 if (success) {
-                    runOnUiThread(() -> {
-                        loadMessages();
-                        scrollToBottom();
-                    });
+                    runOnUiThread(this::loadMessages);
                 } else {
                     runOnUiThread(() -> Toast.makeText(MainActivity.this, "发送失败", Toast.LENGTH_SHORT).show());
                 }
@@ -331,9 +309,8 @@ public class MainActivity extends AppCompatActivity {
                         adapter.notifyDataSetChanged();
                         if (isAtBottom) scrollToBottom();
                         else if (newSize > oldSize && oldSize > 0) {
-                            newMessageCount += (newSize - oldSize);
                             newMessageBar.setVisibility(View.VISIBLE);
-                            ((TextView) newMessageBar.getChildAt(0)).setText(newMessageCount + " 条新消息");
+                            ((TextView) newMessageBar.getChildAt(0)).setText((newSize - oldSize) + " 条新消息");
                         }
                     });
                 }
@@ -346,9 +323,8 @@ public class MainActivity extends AppCompatActivity {
     private void scrollToBottom() {
         if (adapter.getItemCount() > 0) {
             recyclerView.smoothScrollToPosition(adapter.getItemCount() - 1);
-            newMessageBar.setVisibility(View.GONE);
-            newMessageCount = 0;
         }
+        newMessageBar.setVisibility(View.GONE);
     }
 
     private void changeName() {
@@ -408,21 +384,13 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        LocalBroadcastManager.getInstance(this).registerReceiver(newMessageReceiver,
-                new IntentFilter(ChatService.ACTION_NEW_MESSAGE));
+        // 回到前台时刷新一次
+        loadMessages();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(newMessageReceiver);
         if (adapter != null) adapter.stopAudio();
     }
-
-    private final BroadcastReceiver newMessageReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            loadMessages();
-        }
-    };
 }
