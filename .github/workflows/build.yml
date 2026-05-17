@@ -20,6 +20,17 @@ jobs:
         with:
           gradle-version: 7.5.1
 
+      - name: Generate adaptive icons from ic.png
+        run: |
+          mkdir -p app/src/main/res/mipmap-mdpi app/src/main/res/mipmap-hdpi \
+                   app/src/main/res/mipmap-xhdpi app/src/main/res/mipmap-xxhdpi \
+                   app/src/main/res/mipmap-xxxhdpi
+          convert ic.png -resize 48x48   app/src/main/res/mipmap-mdpi/ic_launcher.png
+          convert ic.png -resize 72x72   app/src/main/res/mipmap-hdpi/ic_launcher.png
+          convert ic.png -resize 96x96   app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          convert ic.png -resize 144x144 app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          convert ic.png -resize 192x192 app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
       - name: Build with Gradle
         run: gradle assembleRelease
 
